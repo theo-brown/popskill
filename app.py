@@ -1,25 +1,15 @@
-import popflash_api as pf
-import mlcrate as mlc
-import dateparser
 from collections import defaultdict
-import numpy as np
-from itertools import groupby, combinations
-import os
-import discord
-import asyncio
-from threading import Thread
-import copy
-import time
 from datetime import datetime, date
+from itertools import groupby, combinations
 
-from flask import Flask, jsonify, request
 import flask
-from flask_restful import Resource, Api, reqparse
+import numpy as np
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from skill_tracker import TrueSkillTracker, Player
-from match_db import MatchDB
 import match_db
+from match_db import MatchDB
+from skill_tracker import TrueSkillTracker, Player
 
 app = Flask(__name__)
 CORS(app)
@@ -132,23 +122,29 @@ def balance(season: int=default_season):
     users = [username_tracker[_id] for _id in users]
     print(users)
 
-    srs = [(u, ts[season].skills[u].mu) for u in users]
-    best_comb_diff = 99999999999
-    best_comb = None
-    best_comb_rating = None
-    for team1 in combinations(srs, len(srs)//2):
-        team2 = [u for u in srs if u not in team1]
-        team1sr = sum([u[1] for u in team1])
-        team2sr = sum([u[1] for u in team2])
-        if abs(team1sr - team2sr) < best_comb_diff:
-            best_comb_diff = abs(team1sr - team2sr)
-            best_comb = (team1, team2)
-            best_comb_rating = (team1sr, team2sr)
-    
-    team1 = "\n".join(f'{u[0].name} ({int(u[1])})' for u in best_comb[0])
-    team2 = "\n".join(f'{u[0].name} ({int(u[1])})' for u in best_comb[1])
+    players = [(u, ts[season].skills[u]) for u in users]
 
-    resp = {"team1": team1, "team2": team2, "diff": best_comb_diff, "t1rating": int(best_comb_rating[0]), "t2rating": int(best_comb_rating[1])}
+    def team2(team1):
+        return (u for u in players if u not in team1)
+
+    def drawprob(team1):
+        return ts[season].ts.quality(
+            [(sr for u,sr in t) for t in (team1, team2(team1))]
+        )
+
+    best_team1 = max(
+        combinations(players, len(players) // 2),
+        key=drawprob
+    )
+    best_team2 = team2(best_team1)
+
+    resp = {
+        "team1": '\n'.join(f"{u.name} ({int(sr.mu)})" for u,sr in best_team1),
+        "team2": '\n'.join(f'{u.name} ({int(sr.mu)})' for u,sr in best_team2),
+        "t1rating": sum(sr.mu for u,sr in best_team1),
+        "t2rating": sum(sr.mu for u,sr in best_team2),
+    }
+    resp['diff'] = abs(resp['t2rating'] - resp['t1rating'])
     resp['print'] = f"SUGGESTED TEAM 1:\n{resp['team1']}\n\nSUGGESTED TEAM 2:\n{resp['team2']}\n\nELO DIFF: f{resp['diff']}"
     print(resp)
     return resp, 200
